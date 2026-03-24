@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>旅行記帳工具</title>
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4/dist/tesseract.min.js"></script>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 20px; max-width: 500px; margin: auto; background-color: #f4f6f8; color: #333; }
+        .card { background: #fff; padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 20px; }
+        .input-group { margin-bottom: 15px; }
+        .input-group label { display: block; margin-bottom: 5px; font-weight: bold; }
+        input[type="number"], input[type="text"], select { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; font-size: 16px; }
+        
+        /* 雙按鈕的排版樣式 */
+        .action-buttons { display: flex; gap: 10px; margin-top: 15px; margin-bottom: 15px; }
+        .upload-btn { flex: 1; text-align: center; padding: 12px; background-color: #e9ecef; border-radius: 6px; cursor: pointer; font-weight: bold; border: 1px solid #ccc; display: block; }
+        .upload-btn:hover { background-color: #d3d9df; }
+        
+        button.save-btn { width: 100%; padding: 12px; background-color: #007bff; color: white; border: none; border-radius: 6px; font-size: 16px; cursor: pointer; font-weight: bold; }
+        button.save-btn:hover { background-color: #0056b3; }
+        
+        .preview { max-width: 100%; margin-top: 10px; display: none; border-radius: 8px; }
+        .currency-display { font-size: 1.5em; font-weight: bold; color: #d9534f; }
+        .rate-info { font-size: 0.8em; color: #777; margin-top: 5px; text-align: center; }
+        .record-item { border-bottom: 1px solid #eee; padding: 10px 0; display: flex; justify-content: space-between; align-items: center; }
+        .record-img { width: 50px; height: 50px; object-fit: cover; border-radius: 4px; margin-right: 10px; }
+    </style>
+</head>
+<body>
+
+    <h2 style="text-align: center;">📸 拍照與匯入記帳</h2>
+    <div class="rate-info" id="rateInfo">正在獲取最新匯率...</div>
+    
+    <div class="card">
+        
+        <div class="action-buttons">
+            <label for="cameraInput" class="upload-btn">📸 直接拍照</label>
+            <input type="file" id="cameraInput" accept="image/*" capture="environment" style="display: none;">
+
+            <label for="fileInput" class="upload-btn">📁 相簿匯入</label>
+            <input type="file" id="fileInput" accept="image/*" style="display: none;">
+        </div>
+
+        <img id="imagePreview" class="preview" alt="收據預覽">
+        <p id="statusText" style="color: #007bff; font-weight: bold; font-size: 0.9em; text-align: center;"></p>
+
+        <div class="input-group">
+            <label>分類:</label>
+            <select id="categoryInput">
+                <option value="飲食">🍜 飲食</option>
+                <option value="交通">🚃 交通</option>
+                <option value="購物">🛍️ 購物</option>
+                <option value="住宿">🏨 住宿</option>
+                <option value="其他">📌 其他</option>
+            </select>
+        </div>
+
+        <div class="input-group">
+            <label>日圓 (JPY):</label>
+            <input type="number" id="jpyInput" placeholder="辨識結果會填入此，也可手動修改">
+        </div>
+        
+        <div class="input-group">
+            <label>約合台幣 (TWD):</label>
+            <div id="twdDisplay" class="currency-display">NT$ 0</div>
+        </div>
+
+        <div class="input-group">
+            <label>備註:</label>
+            <input type="text" id="noteInput" placeholder="例如：黑亭拉麵、阿蘇火山伴手禮...">
+        </div>
+
+        <button id="saveBtn" class="save-btn">儲存紀錄</button>
+    </div>
+
+    <div class="card" id="historyCard" style="display: none;">
+        <h3>📝 歷史紀錄</h3>
+        <div id="recordList"></div>
+    </div>
+
+    <canvas id="compressCanvas" style="display:none;"></canvas>
+
+    <script>
+        // DOM 元素
+        const rateInfo = document.getElementById('rateInfo');
+        const cameraInput = document.getElementById('cameraInput');
+        const fileInput = document.getElementById('fileInput');
+        const imagePreview = document.getElementById('imagePreview');
+        const statusText = document.getElementById('statusText');
+        const categoryInput = document.getElementById('categoryInput');
+        const jpyInput = document.getElementById('jpyInput');
+        const twdDisplay = document.getElementById('twdDisplay');
+        const noteInput = document.getElementById('noteInput');
+        const saveBtn = document.getElementById('saveBtn');
+        const recordList = document.getElementById('recordList');
+        const historyCard = document.getElementById('historyCard');
+        const compressCanvas = document.getElementById('compressCanvas');
+        const ctx = compressCanvas.getContext('2d');
+
+        // 全域變數
+        let currentRate = 0.21; 
+        let currentImageBase64 = "";
+
+        // 1. 處理匯率 (ExchangeRate-API)
+        async function initExchangeRate() {
+            try {
+                const response = await fetch('https://open.er-api.com/v6/latest/JPY');
+                const data = await response.json();
+                currentRate = data.rates.TWD;
+                localStorage.setItem('saved_jpy_twd_rate', currentRate);
+                localStorage.setItem('saved_rate_time', new Date().toLocaleString());
+                rateInfo.innerText = `目前匯率: 1 JPY = ${currentRate.toFixed(4)} TWD (線上更新)`;
+            } catch (error) {
+                const savedRate = localStorage.getItem('saved_jpy_twd_rate');
+                const savedTime = localStorage.getItem('saved_rate_time');
+                if (savedRate) {
+                    currentRate = parseFloat(savedRate);
+                    rateInfo.innerText = `目前匯率: 1 JPY = ${currentRate.toFixed(4)} TWD (離線快取於 ${savedTime})`;
+                } else {
+                    rateInfo.innerText = `無法連線，使用預設匯率: 1 JPY = ${currentRate} TWD`;
+                }
+            }
+        }
+
+        // 2. 匯率連動計算
+        jpyInput.addEventListener('input', () => {
+            const jpy = parseFloat(jpyInput.value) || 0;
+            const twd = Math.round(jpy * currentRate);
+            twdDisplay.innerText = `NT$ ${twd}`;
+        });
+
+        // 3. 共用的圖片處理與 OCR 辨識邏輯
+        function processImage(file) {
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(event) {
+                const img = new Image();
+                img.onload = function() {
+                    // 壓縮圖片
+                    const MAX_WIDTH = 400;
+                    const scaleSize = MAX_WIDTH / img.width;
+                    compressCanvas.width = MAX_WIDTH;
+                    compressCanvas.height = img.height * scaleSize;
+                    ctx.drawImage(img, 0, 0, compressCanvas.width, compressCanvas.height);
+                    
+                    currentImageBase64 = compressCanvas.toDataURL('image/jpeg', 0.6);
+                    imagePreview.src = currentImageBase64;
+                    imagePreview.style.display = 'block';
+
+                    // 啟動 OCR
+                    statusText.innerText = "⏳ 正在掃描收據數字...";
+                    statusText.style.color = "#007bff";
+                    
+                    Tesseract.recognize(
+                        currentImageBase64,
+                        'eng', 
+                        { logger: m => { if(m.status === 'recognizing text') statusText.innerText = `⏳ 掃描中... ${Math.round(m.progress * 100)}%`; } }
+                    ).then(({ data: { text } }) => {
+                        const numbers = text.match(/\d{1,3}(?:,\d{3})*|\d+/g);
+                        if (numbers && numbers.length > 0) {
+                            const maxNum = Math.max(...numbers.map(n => parseInt(n.replace(/,/g, ''), 10)));
+                            jpyInput.value = maxNum;
+                            jpyInput.dispatchEvent(new Event('input')); 
+                            statusText.innerText = "✅ 辨識完成！已填入最大金額，請核對。";
+                            statusText.style.color = "green";
+                        } else {
+                            statusText.innerText = "⚠️ 找不到明顯的數字，請手動輸入。";
+                            statusText.style.color = "orange";
+                        }
+                    }).catch(err => {
+                        statusText.innerText = "❌ 辨識失敗，請手動輸入。";
+                        statusText.style.color = "red";
+                    });
+                }
+                img.src = event.target.result;
+            }
+            reader.readAsDataURL(file);
+        }
+
+        // 綁定兩個按鈕的事件
+        cameraInput.addEventListener('change', function(e) {
+            processImage(e.target.files[0]);
+            e.target.value = ''; // 允許重複選擇同一張圖片
+        });
+
+        fileInput.addEventListener('change', function(e) {
+            processImage(e.target.files[0]);
+            e.target.value = ''; // 允許重複選擇同一張圖片
+        });
+
+        // 4. 儲存紀錄至 LocalStorage
+        saveBtn.addEventListener('click', () => {
+            const jpy = parseFloat(jpyInput.value);
+            if (!jpy) {
+                alert("請輸入日圓金額！");
+                return;
+            }
+
+            const newRecord = {
+                id: Date.now(),
+                date: new Date().toLocaleDateString(),
+                category: categoryInput.value,
+                amountJPY: jpy,
+                amountTWD: Math.round(jpy * currentRate),
+                note: noteInput.value || "無備註",
+                image: currentImageBase64
+            };
+
+            const records = JSON.parse(localStorage.getItem('travel_records')) || [];
+            records.unshift(newRecord); 
+            localStorage.setItem('travel_records', JSON.stringify(records));
+
+            // 清空表單
+            jpyInput.value = '';
+            twdDisplay.innerText = 'NT$ 0';
+            noteInput.value = '';
+            imagePreview.style.display = 'none';
+            currentImageBase64 = '';
+            statusText.innerText = '✅ 儲存成功！';
+            
+            renderRecords();
+        });
+
+        // 5. 渲染歷史紀錄
+        function renderRecords() {
+            const records = JSON.parse(localStorage.getItem('travel_records')) || [];
+            if (records.length === 0) return;
+            
+            historyCard.style.display = 'block';
+            recordList.innerHTML = '';
+
+            records.forEach(record => {
+                const item = document.createElement('div');
+                item.className = 'record-item';
+                const imgHtml = record.image ? `<img src="${record.image}" class="record-img">` : '<div class="record-img" style="background:#eee;"></div>';
+                
+                item.innerHTML = `
+                    <div style="display: flex; align-items: center;">
+                        ${imgHtml}
+                        <div>
+                            <strong>${record.category}</strong> - ${record.note}<br>
+                            <span style="font-size: 0.8em; color: #888;">${record.date}</span>
+                        </div>
+                    </div>
+                    <div style="text-align: right;">
+                        <div style="font-weight: bold;">¥ ${record.amountJPY}</div>
+                        <div style="font-size: 0.8em; color: #d9534f;">NT$ ${record.amountTWD}</div>
+                    </div>
+                `;
+                recordList.appendChild(item);
+            });
+        }
+
+        // 初始化
+        initExchangeRate();
+        renderRecords();
+    </script>
+</body>
+</html>
