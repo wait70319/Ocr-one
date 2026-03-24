@@ -3,52 +3,36 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>旅行記帳工具 (雙輸入版)</title>
+    <title>旅行記帳工具 (雲端增強版)</title>
     <style>
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 20px; max-width: 500px; margin: auto; background-color: #f4f6f8; color: #333; }
         .card { background: #fff; padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 20px; }
         .input-group { margin-bottom: 15px; }
         .input-group label { display: block; margin-bottom: 5px; font-weight: bold; }
         input[type="number"], input[type="text"], select { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; font-size: 16px; }
-        
-        /* 按鈕樣式調整 */
-        .btn-primary { width: 100%; padding: 12px; background-color: #007bff; color: white; border: none; border-radius: 6px; font-size: 16px; cursor: pointer; font-weight: bold; }
-        .btn-primary:hover { background-color: #0056b3; }
-        
-        .file-upload-container { display: flex; gap: 10px; margin-bottom: 15px; }
-        .file-upload-box { flex: 1; position: relative; overflow: hidden; display: inline-block; background-color: #e9ecef; border: 2px dashed #adb5bd; border-radius: 8px; text-align: center; padding: 15px 5px; cursor: pointer; }
-        .file-upload-box:hover { background-color: #dee2e6; }
-        .file-upload-box input[type="file"] { position: absolute; left: 0; top: 0; opacity: 0; width: 100%; height: 100%; cursor: pointer; }
-        .file-upload-box span { font-size: 14px; font-weight: bold; color: #495057; }
-
-        .preview { max-width: 100%; margin-top: 10px; display: none; border-radius: 8px; border: 1px solid #ddd; }
+        button { width: 100%; padding: 12px; background-color: #007bff; color: white; border: none; border-radius: 6px; font-size: 16px; cursor: pointer; font-weight: bold; }
+        button:hover { background-color: #0056b3; }
+        .preview { max-width: 100%; margin-top: 10px; display: none; border-radius: 8px; }
         .currency-display { font-size: 1.5em; font-weight: bold; color: #d9534f; }
-        .rate-info { font-size: 0.8em; color: #777; margin-top: 5px; text-align: center; }
+        .rate-info { font-size: 0.8em; color: #777; margin-top: 5px; }
         .record-item { border-bottom: 1px solid #eee; padding: 10px 0; display: flex; justify-content: space-between; align-items: center; }
         .record-img { width: 50px; height: 50px; object-fit: cover; border-radius: 4px; margin-right: 10px; }
     </style>
 </head>
 <body>
 
-    <h2 style="text-align: center;">📸 拍照記帳</h2>
+    <h2 style="text-align: center;">📸 拍照記帳 (雲端增強版)</h2>
     
     <div class="card">
         <div class="rate-info" id="rateInfo">正在獲取最新匯率...</div>
         
-        <label style="font-weight: bold; display: block; margin-top: 15px; margin-bottom: 5px;">1. 匯入收據影像：</label>
-        <div class="file-upload-container">
-            <div class="file-upload-box">
-                <span>📷 現場拍照</span>
-                <input type="file" id="cameraInput" accept="image/*" capture="environment">
-            </div>
-            <div class="file-upload-box">
-                <span>📁 匯入相簿</span>
-                <input type="file" id="fileInput" accept="image/*">
-            </div>
+        <div class="input-group" style="margin-top: 15px;">
+            <label for="cameraInput">1. 拍下收據 (自動抓取合計金額)：</label>
+            <input type="file" id="cameraInput" accept="image/*" capture="environment">
         </div>
 
         <img id="imagePreview" class="preview" alt="收據預覽">
-        <p id="statusText" style="color: #007bff; font-weight: bold; font-size: 0.9em; text-align: center;"></p>
+        <p id="statusText" style="color: #007bff; font-weight: bold; font-size: 0.9em;"></p>
 
         <div class="input-group">
             <label>分類:</label>
@@ -76,7 +60,7 @@
             <input type="text" id="noteInput" placeholder="例如：黑亭拉麵、伴手禮...">
         </div>
 
-        <button id="saveBtn" class="btn-primary">儲存紀錄</button>
+        <button id="saveBtn">儲存紀錄</button>
     </div>
 
     <div class="card" id="historyCard" style="display: none;">
@@ -87,12 +71,11 @@
     <canvas id="compressCanvas" style="display:none;"></canvas>
 
     <script>
-        const API_KEY = 'K88343483088957'; 
+        const API_KEY = 'K88343483088957'; // 你的 OCR.space 金鑰
         
         // DOM 元素
         const rateInfo = document.getElementById('rateInfo');
         const cameraInput = document.getElementById('cameraInput');
-        const fileInput = document.getElementById('fileInput');
         const imagePreview = document.getElementById('imagePreview');
         const statusText = document.getElementById('statusText');
         const categoryInput = document.getElementById('categoryInput');
@@ -108,7 +91,7 @@
         let currentRate = 0.21;
         let currentImageBase64 = "";
 
-        // 1. 處理匯率
+        // 1. 處理匯率 (線上優先，離線備用)
         async function initExchangeRate() {
             try {
                 const response = await fetch('https://open.er-api.com/v6/latest/JPY');
@@ -136,31 +119,35 @@
             twdDisplay.innerText = `NT$ ${twd}`;
         });
 
-        // 3. 獨立出共用的圖片處理與 OCR 邏輯
-        function processImage(file) {
+        // 3. 處理圖片與 OCR.space 辨識
+        cameraInput.addEventListener('change', function(e) {
+            const file = e.target.files[0];
             if (!file) return;
 
             const reader = new FileReader();
             reader.onload = function(event) {
                 const img = new Image();
                 img.onload = function() {
+                    // 圖片壓縮 (OCR.space 限制 1MB 內)
                     const MAX_WIDTH = 600; 
                     const scaleSize = MAX_WIDTH / img.width;
                     compressCanvas.width = MAX_WIDTH;
                     compressCanvas.height = img.height * scaleSize;
                     ctx.drawImage(img, 0, 0, compressCanvas.width, compressCanvas.height);
                     
+                    // 轉為 Base64
                     currentImageBase64 = compressCanvas.toDataURL('image/jpeg', 0.8);
                     imagePreview.src = currentImageBase64;
                     imagePreview.style.display = 'block';
 
+                    // 呼叫 OCR.space API
                     statusText.innerText = "☁️ 正在上傳雲端辨識中，請稍候...";
                     statusText.style.color = "#007bff";
                     
                     const formData = new FormData();
                     formData.append('base64Image', currentImageBase64);
-                    formData.append('language', 'jpn');
-                    formData.append('scale', 'true');
+                    formData.append('language', 'jpn'); // 使用日文引擎
+                    formData.append('scale', 'true'); // 自動放大圖片增強辨識率
 
                     fetch('https://api.ocr.space/parse/image', {
                         method: 'POST',
@@ -174,15 +161,40 @@
                         }
                         
                         const text = data.ParsedResults[0].ParsedText;
-                        const numbers = text.match(/\d{1,3}(?:,\d{3})*|\d+/g);
-                        if (numbers && numbers.length > 0) {
-                            const maxNum = Math.max(...numbers.map(n => parseInt(n.replace(/,/g, ''), 10)));
-                            jpyInput.value = maxNum;
-                            jpyInput.dispatchEvent(new Event('input'));
-                            statusText.innerText = "✅ 辨識完成！已填入最大金額。";
+                        console.log("雲端 OCR 原始結果：\n", text);
+                        
+                        let finalAmount = 0;
+                        const lines = text.split('\n'); // 將辨識結果按行拆分
+                        
+                        // 策略 A：優先尋找含有「合計」或「合 計」的行
+                        for (let line of lines) {
+                            if (line.includes('合計') || line.includes('合 計') || line.includes('お買上額') || line.includes('小計')) {
+                                // 在該行抓取所有數字
+                                const matches = line.match(/\d{1,3}(?:,\d{3})*|\d+/g);
+                                if (matches) {
+                                    // 找出該行最大的數字
+                                    finalAmount = Math.max(...matches.map(n => parseInt(n.replace(/,/g, ''), 10)));
+                                    if (finalAmount > 0) break; // 找到合理金額就停止搜尋
+                                }
+                            }
+                        }
+
+                        // 防呆機制：如果找不到關鍵字，退而求其次找帶有「¥」或「￥」的數字
+                        if (finalAmount === 0) {
+                            const yenMatches = text.match(/[¥￥]\s*([\d,]+)/g);
+                            if (yenMatches) {
+                                const parsedYen = yenMatches.map(str => parseInt(str.replace(/[¥￥\s,]/g, ''), 10));
+                                finalAmount = Math.max(...parsedYen); // 從有標示幣值的數字中挑最大的
+                            }
+                        }
+
+                        if (finalAmount > 0) {
+                            jpyInput.value = finalAmount;
+                            jpyInput.dispatchEvent(new Event('input')); // 觸發 TWD 計算
+                            statusText.innerText = `✅ 辨識完成！抓取到合計金額：¥${finalAmount}。`;
                             statusText.style.color = "green";
                         } else {
-                            statusText.innerText = "⚠️ 找不到明顯數字，請手動輸入。";
+                            statusText.innerText = "⚠️ 找不到明確的合計數字，請手動輸入。";
                             statusText.style.color = "orange";
                         }
                     })
@@ -195,17 +207,6 @@
                 img.src = event.target.result;
             }
             reader.readAsDataURL(file);
-        }
-
-        // 綁定兩個輸入按鈕的事件
-        cameraInput.addEventListener('change', function(e) {
-            processImage(e.target.files[0]);
-            fileInput.value = ''; // 清除另一個 input 的值避免混淆
-        });
-
-        fileInput.addEventListener('change', function(e) {
-            processImage(e.target.files[0]);
-            cameraInput.value = ''; // 清除另一個 input 的值避免混淆
         });
 
         // 4. 儲存紀錄至 LocalStorage
@@ -237,8 +238,7 @@
             imagePreview.style.display = 'none';
             currentImageBase64 = '';
             cameraInput.value = '';
-            fileInput.value = '';
-            statusText.innerText = '✅ 紀錄已成功儲存！';
+            statusText.innerText = '儲存成功！';
             
             renderRecords();
         });
