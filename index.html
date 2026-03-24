@@ -11,39 +11,29 @@
         .input-group { margin-bottom: 15px; }
         .input-group label { display: block; margin-bottom: 5px; font-weight: bold; }
         input[type="number"], input[type="text"], select { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; font-size: 16px; }
-        
-        /* 雙按鈕的排版樣式 */
-        .action-buttons { display: flex; gap: 10px; margin-top: 15px; margin-bottom: 15px; }
-        .upload-btn { flex: 1; text-align: center; padding: 12px; background-color: #e9ecef; border-radius: 6px; cursor: pointer; font-weight: bold; border: 1px solid #ccc; display: block; }
-        .upload-btn:hover { background-color: #d3d9df; }
-        
-        button.save-btn { width: 100%; padding: 12px; background-color: #007bff; color: white; border: none; border-radius: 6px; font-size: 16px; cursor: pointer; font-weight: bold; }
-        button.save-btn:hover { background-color: #0056b3; }
-        
+        button { width: 100%; padding: 12px; background-color: #007bff; color: white; border: none; border-radius: 6px; font-size: 16px; cursor: pointer; font-weight: bold; }
+        button:hover { background-color: #0056b3; }
         .preview { max-width: 100%; margin-top: 10px; display: none; border-radius: 8px; }
         .currency-display { font-size: 1.5em; font-weight: bold; color: #d9534f; }
-        .rate-info { font-size: 0.8em; color: #777; margin-top: 5px; text-align: center; }
+        .rate-info { font-size: 0.8em; color: #777; margin-top: 5px; }
         .record-item { border-bottom: 1px solid #eee; padding: 10px 0; display: flex; justify-content: space-between; align-items: center; }
         .record-img { width: 50px; height: 50px; object-fit: cover; border-radius: 4px; margin-right: 10px; }
     </style>
 </head>
 <body>
 
-    <h2 style="text-align: center;">📸 拍照與匯入記帳</h2>
-    <div class="rate-info" id="rateInfo">正在獲取最新匯率...</div>
+    <h2 style="text-align: center;">📸 拍照記帳</h2>
     
     <div class="card">
+        <div class="rate-info" id="rateInfo">正在獲取最新匯率...</div>
         
-        <div class="action-buttons">
-            <label for="cameraInput" class="upload-btn">📸 直接拍照</label>
-            <input type="file" id="cameraInput" accept="image/*" capture="environment" style="display: none;">
-
-            <label for="fileInput" class="upload-btn">📁 相簿匯入</label>
-            <input type="file" id="fileInput" accept="image/*" style="display: none;">
+        <div class="input-group" style="margin-top: 15px;">
+            <label for="cameraInput">1. 拍下收據 (自動抓取最大金額)：</label>
+            <input type="file" id="cameraInput" accept="image/*" capture="environment">
         </div>
 
         <img id="imagePreview" class="preview" alt="收據預覽">
-        <p id="statusText" style="color: #007bff; font-weight: bold; font-size: 0.9em; text-align: center;"></p>
+        <p id="statusText" style="color: #007bff; font-weight: bold; font-size: 0.9em;"></p>
 
         <div class="input-group">
             <label>分類:</label>
@@ -71,7 +61,7 @@
             <input type="text" id="noteInput" placeholder="例如：黑亭拉麵、阿蘇火山伴手禮...">
         </div>
 
-        <button id="saveBtn" class="save-btn">儲存紀錄</button>
+        <button id="saveBtn">儲存紀錄</button>
     </div>
 
     <div class="card" id="historyCard" style="display: none;">
@@ -85,7 +75,6 @@
         // DOM 元素
         const rateInfo = document.getElementById('rateInfo');
         const cameraInput = document.getElementById('cameraInput');
-        const fileInput = document.getElementById('fileInput');
         const imagePreview = document.getElementById('imagePreview');
         const statusText = document.getElementById('statusText');
         const categoryInput = document.getElementById('categoryInput');
@@ -99,7 +88,7 @@
         const ctx = compressCanvas.getContext('2d');
 
         // 全域變數
-        let currentRate = 0.21; 
+        let currentRate = 0.21; // 預設防呆匯率
         let currentImageBase64 = "";
 
         // 1. 處理匯率 (ExchangeRate-API)
@@ -112,6 +101,7 @@
                 localStorage.setItem('saved_rate_time', new Date().toLocaleString());
                 rateInfo.innerText = `目前匯率: 1 JPY = ${currentRate.toFixed(4)} TWD (線上更新)`;
             } catch (error) {
+                // 離線狀態：讀取 LocalStorage
                 const savedRate = localStorage.getItem('saved_jpy_twd_rate');
                 const savedTime = localStorage.getItem('saved_rate_time');
                 if (savedRate) {
@@ -130,39 +120,42 @@
             twdDisplay.innerText = `NT$ ${twd}`;
         });
 
-        // 3. 共用的圖片處理與 OCR 辨識邏輯
-        function processImage(file) {
+        // 3. 處理圖片與 OCR 辨識
+        cameraInput.addEventListener('change', function(e) {
+            const file = e.target.files[0];
             if (!file) return;
 
             const reader = new FileReader();
             reader.onload = function(event) {
                 const img = new Image();
                 img.onload = function() {
-                    // 壓縮圖片
+                    // 壓縮圖片以防 LocalStorage 爆滿 (寬度限制 400px)
                     const MAX_WIDTH = 400;
                     const scaleSize = MAX_WIDTH / img.width;
                     compressCanvas.width = MAX_WIDTH;
                     compressCanvas.height = img.height * scaleSize;
                     ctx.drawImage(img, 0, 0, compressCanvas.width, compressCanvas.height);
                     
+                    // 儲存壓縮後的 Base64
                     currentImageBase64 = compressCanvas.toDataURL('image/jpeg', 0.6);
                     imagePreview.src = currentImageBase64;
                     imagePreview.style.display = 'block';
 
-                    // 啟動 OCR
-                    statusText.innerText = "⏳ 正在掃描收據數字...";
-                    statusText.style.color = "#007bff";
-                    
+                    // 啟動 OCR (加入 jpn 日文語系)
+                    statusText.innerText = "⏳ 正在掃描收據數字... (初次載入日文語系會稍久)";
                     Tesseract.recognize(
                         currentImageBase64,
-                        'eng', 
+                        'eng+jpn', // 同時載入英文與日文
                         { logger: m => { if(m.status === 'recognizing text') statusText.innerText = `⏳ 掃描中... ${Math.round(m.progress * 100)}%`; } }
                     ).then(({ data: { text } }) => {
+                        console.log("OCR 原始辨識結果：\n", text); // 方便在 F12 開發者工具中除錯
+                        // Regex 尋找所有數字 (包含可能有逗號的格式如 1,200)
                         const numbers = text.match(/\d{1,3}(?:,\d{3})*|\d+/g);
                         if (numbers && numbers.length > 0) {
+                            // 將字串轉為純數字並找出最大值
                             const maxNum = Math.max(...numbers.map(n => parseInt(n.replace(/,/g, ''), 10)));
                             jpyInput.value = maxNum;
-                            jpyInput.dispatchEvent(new Event('input')); 
+                            jpyInput.dispatchEvent(new Event('input')); // 觸發 TWD 計算
                             statusText.innerText = "✅ 辨識完成！已填入最大金額，請核對。";
                             statusText.style.color = "green";
                         } else {
@@ -171,23 +164,12 @@
                         }
                     }).catch(err => {
                         statusText.innerText = "❌ 辨識失敗，請手動輸入。";
-                        statusText.style.color = "red";
+                        console.error(err);
                     });
                 }
                 img.src = event.target.result;
             }
             reader.readAsDataURL(file);
-        }
-
-        // 綁定兩個按鈕的事件
-        cameraInput.addEventListener('change', function(e) {
-            processImage(e.target.files[0]);
-            e.target.value = ''; // 允許重複選擇同一張圖片
-        });
-
-        fileInput.addEventListener('change', function(e) {
-            processImage(e.target.files[0]);
-            e.target.value = ''; // 允許重複選擇同一張圖片
         });
 
         // 4. 儲存紀錄至 LocalStorage
@@ -209,7 +191,7 @@
             };
 
             const records = JSON.parse(localStorage.getItem('travel_records')) || [];
-            records.unshift(newRecord); 
+            records.unshift(newRecord); // 新紀錄放前面
             localStorage.setItem('travel_records', JSON.stringify(records));
 
             // 清空表單
@@ -218,7 +200,8 @@
             noteInput.value = '';
             imagePreview.style.display = 'none';
             currentImageBase64 = '';
-            statusText.innerText = '✅ 儲存成功！';
+            cameraInput.value = '';
+            statusText.innerText = '儲存成功！';
             
             renderRecords();
         });
