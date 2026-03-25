@@ -1,10 +1,12 @@
-const CACHE_NAME = 'travel-app-v1';
+const CACHE_NAME = 'travel-app-v2';
+const BASE = '/Ocr-one';
 const STATIC_ASSETS = [
-  './index.html',
-  './manifest.json',
-  './icon-192.png',
-  './icon-512.png',
-  './apple-touch-icon.png'
+  BASE + '/',
+  BASE + '/index.html',
+  BASE + '/manifest.json',
+  BASE + '/icon-192.png',
+  BASE + '/icon-512.png',
+  BASE + '/apple-touch-icon.png'
 ];
 
 // ── 安裝：預快取靜態資源 ──────────────────────────────────
@@ -25,21 +27,23 @@ self.addEventListener('activate', event => {
   self.clients.claim();
 });
 
-// ── 攔截請求：靜態資源用快取，API 請求優先網路 ────────────
+// ── 攔截請求 ──────────────────────────────────────────────
 self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
 
-  // OCR / 匯率 API → 直接走網路，失敗才回傳錯誤
+  // OCR / 匯率 API → 直接走網路
   if (url.hostname.includes('ocr.space') || url.hostname.includes('er-api.com')) {
-    event.respondWith(fetch(event.request).catch(() =>
-      new Response(JSON.stringify({ error: 'offline' }), {
-        headers: { 'Content-Type': 'application/json' }
-      })
-    ));
+    event.respondWith(
+      fetch(event.request).catch(() =>
+        new Response(JSON.stringify({ error: 'offline' }), {
+          headers: { 'Content-Type': 'application/json' }
+        })
+      )
+    );
     return;
   }
 
-  // 其餘資源：Cache First
+  // 其餘：Cache First（靜態資源優先快取）
   event.respondWith(
     caches.match(event.request).then(cached => {
       if (cached) return cached;
