@@ -2,48 +2,126 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>旅行記帳工具 (雲端增強版)</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>旅行記帳工具</title>
+
+    <!-- ── PWA 核心 ── -->
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#1a1a2e">
+
+    <!-- ── iOS Safari PWA ── -->
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="旅行記帳">
+    <link rel="apple-touch-icon" href="apple-touch-icon.png">
+    <!-- iOS Splash 顏色用 meta 背景代替（不需靜態圖） -->
+    <meta name="msapplication-TileColor" content="#1a1a2e">
+
+    <!-- ── Android Chrome ── -->
+    <meta name="mobile-web-app-capable" content="yes">
+    <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+
+    <!-- ── SEO / 分享 ── -->
+    <meta name="description" content="拍照辨識日文收據，自動換算日圓台幣，離線也能記帳">
+
     <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 20px; max-width: 500px; margin: auto; background-color: #f4f6f8; color: #333; }
+        /* ── 基礎 & Safe Area（iPhone 瀏海 / 底部手勢條）── */
+        * { box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            padding: 20px;
+            padding-top: calc(20px + env(safe-area-inset-top));
+            padding-bottom: calc(20px + env(safe-area-inset-bottom));
+            padding-left:  calc(20px + env(safe-area-inset-left));
+            padding-right: calc(20px + env(safe-area-inset-right));
+            max-width: 500px; margin: auto;
+            background-color: #f4f6f8; color: #333;
+        }
         .card { background: #fff; padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 20px; }
         .input-group { margin-bottom: 15px; }
         .input-group label { display: block; margin-bottom: 5px; font-weight: bold; }
-        input[type="number"], input[type="text"], select { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; font-size: 16px; }
-        button { width: 100%; padding: 12px; background-color: #007bff; color: white; border: none; border-radius: 6px; font-size: 16px; cursor: pointer; font-weight: bold; }
-        button:hover { background-color: #0056b3; }
+        input[type="number"], input[type="text"], select {
+            width: 100%; padding: 12px; border: 1px solid #ccc; border-radius: 8px;
+            font-size: 16px; /* 防止 iOS 自動縮放 */
+            -webkit-appearance: none; appearance: none;
+        }
+        button {
+            width: 100%; padding: 14px; background-color: #007bff;
+            color: white; border: none; border-radius: 8px;
+            font-size: 16px; cursor: pointer; font-weight: bold;
+            -webkit-tap-highlight-color: transparent;
+            touch-action: manipulation;
+        }
+        button:active { opacity: 0.85; }
         .preview { max-width: 100%; margin-top: 10px; display: none; border-radius: 8px; }
         .currency-display { font-size: 1.5em; font-weight: bold; color: #d9534f; }
-        .rate-info { font-size: 0.8em; color: #777; margin-top: 5px; }
+        .rate-info { font-size: 0.8em; color: #777; }
         .record-item { border-bottom: 1px solid #eee; padding: 10px 0; display: flex; justify-content: space-between; align-items: center; }
         .record-img { width: 50px; height: 50px; object-fit: cover; border-radius: 4px; margin-right: 10px; flex-shrink: 0; }
 
-        /* 圖片來源 tabs */
+        /* 來源切換 tabs */
         .source-tabs { display: flex; gap: 8px; margin-bottom: 12px; }
-        .source-tab { flex: 1; padding: 10px; border: 2px solid #ccc; background: #f8f9fa; border-radius: 8px; font-size: 14px; font-weight: bold; color: #555; cursor: pointer; text-align: center; transition: all 0.2s; }
+        .source-tab {
+            flex: 1; padding: 11px 6px; border: 2px solid #ccc;
+            background: #f8f9fa; border-radius: 8px;
+            font-size: 14px; font-weight: bold; color: #555;
+            cursor: pointer; text-align: center; transition: all 0.2s;
+            -webkit-tap-highlight-color: transparent;
+            touch-action: manipulation;
+        }
         .source-tab.active { border-color: #007bff; background: #e7f1ff; color: #007bff; }
 
+        /* 安裝橫幅 (iOS 提示) */
+        #installBanner {
+            display: none; background: #1a1a2e; color: #fff;
+            padding: 12px 16px; border-radius: 10px;
+            margin-bottom: 16px; font-size: 0.85em;
+            align-items: center; gap: 10px;
+        }
+        #installBanner span { flex: 1; }
+        #installBanner button {
+            width: auto; padding: 7px 14px; font-size: 13px;
+            background: #007bff; border-radius: 6px; white-space: nowrap;
+        }
+        #installBanner .close-btn {
+            background: none; color: #aaa; width: auto; padding: 4px 6px; font-size: 18px;
+        }
+
         /* 總計卡片 */
-        .summary-card { background: linear-gradient(135deg, #1a1a2e, #16213e); color: #fff; padding: 20px; border-radius: 12px; margin-bottom: 20px; }
+        .summary-card {
+            background: linear-gradient(135deg, #1a1a2e, #16213e);
+            color: #fff; padding: 20px; border-radius: 12px; margin-bottom: 20px;
+        }
         .summary-card h3 { margin: 0 0 14px 0; font-size: 1em; opacity: 0.8; letter-spacing: 1px; }
         .summary-main { font-size: 2em; font-weight: bold; color: #ff6b6b; line-height: 1.2; }
-        .summary-sub { font-size: 1em; color: #a8c6fa; margin-top: 4px; }
+        .summary-sub  { font-size: 1em; color: #a8c6fa; margin-top: 4px; }
         .summary-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 14px; }
         .summary-item { background: rgba(255,255,255,0.08); border-radius: 8px; padding: 10px 12px; }
         .summary-item .slabel { font-size: 0.75em; opacity: 0.7; margin-bottom: 4px; }
         .summary-item .svalue { font-size: 1.05em; font-weight: bold; }
 
         /* 操作按鈕列 */
-        .btn-row { display: flex; gap: 8px; margin-top: 14px; }
-        .btn-sm { flex: 1; padding: 9px 4px; font-size: 12px; border-radius: 6px; border: none; cursor: pointer; font-weight: bold; color: white; }
+        .btn-row { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
+        .btn-sm {
+            flex: 1; min-width: calc(50% - 4px); padding: 10px 4px;
+            font-size: 12px; border-radius: 6px; border: none;
+            cursor: pointer; font-weight: bold; color: white;
+            -webkit-tap-highlight-color: transparent;
+            touch-action: manipulation;
+        }
+        .btn-sm:active { opacity: 0.85; }
         .btn-export-json { background: #6c757d; }
-        .btn-export-json:hover { background: #545b62; }
         .btn-export-csv  { background: #28a745; }
-        .btn-export-csv:hover  { background: #1e7e34; }
         .btn-import-json { background: #fd7e14; }
-        .btn-import-json:hover { background: #e96b02; }
-        .btn-danger { background: #dc3545; }
-        .btn-danger:hover { background: #b02a37; }
+        .btn-danger      { background: #dc3545; }
+
+        /* 離線提示 */
+        #offlineBar {
+            display: none; position: fixed; top: 0; left: 0; right: 0;
+            background: #dc3545; color: #fff;
+            text-align: center; padding: 8px; font-size: 13px; font-weight: bold;
+            z-index: 9999;
+        }
 
         /* 分類標籤 */
         .tag { display: inline-block; padding: 2px 7px; border-radius: 12px; font-size: 0.75em; font-weight: bold; margin-right: 4px; }
@@ -56,7 +134,17 @@
 </head>
 <body>
 
-<h2 style="text-align: center;">📸 拍照記帳 (雲端增強版)</h2>
+<!-- 離線提示條 -->
+<div id="offlineBar">📵 目前離線，OCR 辨識與匯率更新需要網路連線</div>
+
+<!-- iOS 安裝橫幅 -->
+<div id="installBanner">
+    <span>📲 點「分享」→「加入主畫面」即可安裝 App</span>
+    <button onclick="dismissBanner()">知道了</button>
+    <button class="close-btn" onclick="dismissBanner()">✕</button>
+</div>
+
+<h2 style="text-align:center;">📸 旅行記帳</h2>
 
 <!-- 記帳表單 -->
 <div class="card">
@@ -66,14 +154,15 @@
         <label>1. 選擇圖片來源：</label>
         <div class="source-tabs">
             <div class="source-tab active" id="tabCamera" onclick="switchSource('camera')">📷 拍照</div>
-            <div class="source-tab"        id="tabFile"   onclick="switchSource('file')">🖼️ 從檔案匯入</div>
+            <div class="source-tab"        id="tabFile"   onclick="switchSource('file')">🖼️ 從相簿/檔案</div>
         </div>
+        <!-- capture="environment" → 直接開後鏡頭；無 capture → 讓使用者選 -->
         <input type="file" id="cameraInput" accept="image/*" capture="environment">
         <input type="file" id="fileInput"   accept="image/*" style="display:none;">
     </div>
 
     <img id="imagePreview" class="preview" alt="收據預覽">
-    <p  id="statusText" style="color:#007bff;font-weight:bold;font-size:0.9em;"></p>
+    <p  id="statusText" style="color:#007bff;font-weight:bold;font-size:0.9em;min-height:1.2em;"></p>
 
     <div class="input-group">
         <label>分類:</label>
@@ -88,7 +177,7 @@
 
     <div class="input-group">
         <label>日圓 (JPY):</label>
-        <input type="number" id="jpyInput" placeholder="辨識結果會填入此，也可手動修改">
+        <input type="number" id="jpyInput" inputmode="numeric" placeholder="辨識結果會填入此，也可手動修改">
     </div>
 
     <div class="input-group">
@@ -104,17 +193,17 @@
     <button id="saveBtn">儲存紀錄</button>
 </div>
 
-<!-- 總計花費（有資料才顯示） -->
+<!-- 總計花費 -->
 <div class="summary-card" id="summaryCard" style="display:none;">
     <h3>💴 總計花費</h3>
     <div class="summary-main" id="summaryJPY">¥ 0</div>
     <div class="summary-sub"  id="summaryTWD">約 NT$ 0</div>
     <div class="summary-grid" id="summaryGrid"></div>
     <div class="btn-row">
-        <button class="btn-sm btn-export-json" onclick="exportJSON()">📦 備份JSON</button>
-        <button class="btn-sm btn-export-csv"  onclick="exportCSV()">📊 匯出CSV</button>
-        <button class="btn-sm btn-import-json" onclick="document.getElementById('importInput').click()">📥 匯入JSON</button>
-        <button class="btn-sm btn-danger"       onclick="clearAll()">🗑️ 清除</button>
+        <button class="btn-sm btn-export-json" onclick="exportJSON()">📦 備份 JSON</button>
+        <button class="btn-sm btn-export-csv"  onclick="exportCSV()">📊 匯出 CSV</button>
+        <button class="btn-sm btn-import-json" onclick="document.getElementById('importInput').click()">📥 匯入 JSON</button>
+        <button class="btn-sm btn-danger"       onclick="clearAll()">🗑️ 清除全部</button>
     </div>
     <input type="file" id="importInput" accept=".json" style="display:none;">
 </div>
@@ -130,6 +219,7 @@
 <script>
 const API_KEY = 'K88343483088957';
 
+// DOM
 const rateInfo       = document.getElementById('rateInfo');
 const cameraInput    = document.getElementById('cameraInput');
 const fileInput      = document.getElementById('fileInput');
@@ -145,10 +235,52 @@ const historyCard    = document.getElementById('historyCard');
 const summaryCard    = document.getElementById('summaryCard');
 const importInput    = document.getElementById('importInput');
 const compressCanvas = document.getElementById('compressCanvas');
-const ctx = compressCanvas.getContext('2d');
+const ctx            = compressCanvas.getContext('2d');
 
 let currentRate = 0.21;
 let currentImageBase64 = '';
+let deferredPrompt = null; // Android 安裝 prompt
+
+// ── Service Worker 註冊 ───────────────────────────────────
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js')
+            .then(reg => console.log('SW registered:', reg.scope))
+            .catch(err => console.warn('SW failed:', err));
+    });
+}
+
+// ── 離線偵測 ─────────────────────────────────────────────
+const offlineBar = document.getElementById('offlineBar');
+function updateOnlineStatus() {
+    offlineBar.style.display = navigator.onLine ? 'none' : 'block';
+}
+window.addEventListener('online',  updateOnlineStatus);
+window.addEventListener('offline', updateOnlineStatus);
+updateOnlineStatus();
+
+// ── Android PWA 安裝提示 ──────────────────────────────────
+window.addEventListener('beforeinstallprompt', e => {
+    e.preventDefault();
+    deferredPrompt = e;
+    // 可在此顯示自訂安裝按鈕；這裡直接靜默保留 prompt 備用
+});
+
+// ── iOS PWA 安裝提示 ──────────────────────────────────────
+function isIOS() {
+    return /iphone|ipad|ipod/i.test(navigator.userAgent);
+}
+function isInStandaloneMode() {
+    return window.matchMedia('(display-mode: standalone)').matches
+        || window.navigator.standalone === true;
+}
+function dismissBanner() {
+    document.getElementById('installBanner').style.display = 'none';
+    localStorage.setItem('install_banner_dismissed', '1');
+}
+if (isIOS() && !isInStandaloneMode() && !localStorage.getItem('install_banner_dismissed')) {
+    document.getElementById('installBanner').style.display = 'flex';
+}
 
 // ── 來源切換 ──────────────────────────────────────────────
 function switchSource(mode) {
@@ -165,20 +297,20 @@ function switchSource(mode) {
 // ── 匯率 ──────────────────────────────────────────────────
 async function initExchangeRate() {
     try {
-        const res = await fetch('https://open.er-api.com/v6/latest/JPY');
+        const res  = await fetch('https://open.er-api.com/v6/latest/JPY');
         const data = await res.json();
         currentRate = data.rates.TWD;
         localStorage.setItem('saved_jpy_twd_rate', currentRate);
         localStorage.setItem('saved_rate_time', new Date().toLocaleString());
-        rateInfo.innerText = `目前匯率: 1 JPY = ${currentRate.toFixed(4)} TWD（線上更新）`;
+        rateInfo.innerText = `目前匯率: 1 JPY ≈ ${currentRate.toFixed(4)} TWD（線上更新）`;
     } catch {
         const savedRate = localStorage.getItem('saved_jpy_twd_rate');
         const savedTime = localStorage.getItem('saved_rate_time');
         if (savedRate) {
             currentRate = parseFloat(savedRate);
-            rateInfo.innerText = `目前匯率: 1 JPY = ${currentRate.toFixed(4)} TWD（離線快取於 ${savedTime}）`;
+            rateInfo.innerText = `1 JPY ≈ ${currentRate.toFixed(4)} TWD（快取於 ${savedTime}）`;
         } else {
-            rateInfo.innerText = `無法連線，使用預設匯率: 1 JPY = ${currentRate} TWD`;
+            rateInfo.innerText = `無法連線，使用預設匯率 1 JPY ≈ ${currentRate} TWD`;
         }
     }
 }
@@ -188,7 +320,7 @@ jpyInput.addEventListener('input', () => {
     twdDisplay.innerText = `NT$ ${Math.round(jpy * currentRate).toLocaleString()}`;
 });
 
-// ── OCR 金額擷取（多策略） ────────────────────────────────
+// ── OCR 金額擷取 ──────────────────────────────────────────
 function extractAmountFromOCR(text) {
     const normalized = text
         .replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
@@ -216,14 +348,12 @@ function extractAmountFromOCR(text) {
             }
         }
     }
-
     const noChange = normalized.replace(/お釣り[^\n]*/g, '').replace(/釣銭[^\n]*/g, '');
     const yenMatches = noChange.match(/[¥]\s*(\d[\d,]+)/g);
     if (yenMatches) {
         const max = Math.max(...yenMatches.map(s => parseInt(s.replace(/[¥\s,]/g, ''), 10)));
         if (max >= 10) return max;
     }
-
     const allNums = normalized.match(/\d[\d,]*/g);
     if (allNums) return Math.max(...allNums.map(n => parseInt(n.replace(/,/g, ''), 10)));
     return 0;
@@ -243,11 +373,17 @@ function processImageFile(file) {
             ctx.drawImage(img, 0, 0, compressCanvas.width, compressCanvas.height);
 
             currentImageBase64 = compressCanvas.toDataURL('image/jpeg', 0.8);
-            imagePreview.src = currentImageBase64;
+            imagePreview.src   = currentImageBase64;
             imagePreview.style.display = 'block';
 
             statusText.style.color = '#007bff';
             statusText.innerText = '☁️ 正在上傳雲端辨識中，請稍候...';
+
+            if (!navigator.onLine) {
+                statusText.style.color = 'orange';
+                statusText.innerText = '📵 目前離線，請手動輸入金額。';
+                return;
+            }
 
             const formData = new FormData();
             formData.append('base64Image', currentImageBase64);
@@ -271,7 +407,7 @@ function processImageFile(file) {
                     jpyInput.value = amount;
                     jpyInput.dispatchEvent(new Event('input'));
                     statusText.style.color = 'green';
-                    statusText.innerText = `✅ 辨識完成！抓取到合計金額：¥${amount}`;
+                    statusText.innerText = `✅ 辨識完成！合計金額：¥${amount.toLocaleString()}`;
                 } else {
                     statusText.style.color = 'orange';
                     statusText.innerText = '⚠️ 找不到明確合計數字，請手動輸入。';
@@ -280,7 +416,7 @@ function processImageFile(file) {
             .catch(err => {
                 console.error(err);
                 statusText.style.color = 'red';
-                statusText.innerText = '❌ 辨識失敗或無網路連線，請手動輸入。';
+                statusText.innerText = '❌ 辨識失敗，請手動輸入。';
             });
         };
         img.src = event.target.result;
@@ -298,11 +434,11 @@ saveBtn.addEventListener('click', () => {
 
     const record = {
         id: Date.now(),
-        date: new Date().toLocaleDateString(),
+        date: new Date().toLocaleDateString('zh-TW'),
         category: categoryInput.value,
         amountJPY: jpy,
         amountTWD: Math.round(jpy * currentRate),
-        note: noteInput.value || '無備註',
+        note: noteInput.value.trim() || '無備註',
         image: currentImageBase64
     };
 
@@ -310,6 +446,7 @@ saveBtn.addEventListener('click', () => {
     records.unshift(record);
     localStorage.setItem('travel_records', JSON.stringify(records));
 
+    // 清空表單
     jpyInput.value = '';
     twdDisplay.innerText = 'NT$ 0';
     noteInput.value = '';
@@ -321,6 +458,9 @@ saveBtn.addEventListener('click', () => {
     statusText.innerText = '✅ 儲存成功！';
 
     renderAll();
+
+    // 滾動到總計卡片
+    setTimeout(() => summaryCard.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
 });
 
 // ── 總計渲染 ──────────────────────────────────────────────
@@ -330,12 +470,13 @@ function renderSummary(records) {
 
     const totalJPY = records.reduce((s, r) => s + r.amountJPY, 0);
     const totalTWD = records.reduce((s, r) => s + r.amountTWD, 0);
+    const count    = records.length;
 
     document.getElementById('summaryJPY').innerText = `¥ ${totalJPY.toLocaleString()}`;
-    document.getElementById('summaryTWD').innerText = `約 NT$ ${totalTWD.toLocaleString()}`;
+    document.getElementById('summaryTWD').innerText = `約 NT$ ${totalTWD.toLocaleString()}　共 ${count} 筆`;
 
     const catEmoji = { 飲食:'🍜', 交通:'🚃', 購物:'🛍️', 住宿:'🏨', 其他:'📌' };
-    const catMap = {};
+    const catMap   = {};
     records.forEach(r => { catMap[r.category] = (catMap[r.category] || 0) + r.amountJPY; });
 
     const grid = document.getElementById('summaryGrid');
@@ -364,13 +505,13 @@ function renderRecords(records) {
         item.className = 'record-item';
         const imgHtml = record.image
             ? `<img src="${record.image}" class="record-img">`
-            : `<div class="record-img" style="background:#eee;display:flex;align-items:center;justify-content:center;color:#aaa;font-size:1.4em;">📷</div>`;
+            : `<div class="record-img" style="background:#eee;display:flex;align-items:center;justify-content:center;font-size:1.4em;">📷</div>`;
         item.innerHTML = `
-            <div style="display:flex;align-items:center;">
+            <div style="display:flex;align-items:center;min-width:0;">
                 ${imgHtml}
-                <div>
+                <div style="min-width:0;">
                     <span class="tag ${catClass[record.category] || ''}">${record.category}</span>
-                    <strong>${record.note}</strong><br>
+                    <strong style="word-break:break-all;">${record.note}</strong><br>
                     <span style="font-size:0.8em;color:#888;">${record.date}</span>
                 </div>
             </div>
@@ -388,18 +529,18 @@ function renderAll() {
     renderRecords(records);
 }
 
-// ── 匯出 JSON 備份 ────────────────────────────────────────
+// ── 匯出 JSON ─────────────────────────────────────────────
 function exportJSON() {
     const records = JSON.parse(localStorage.getItem('travel_records')) || [];
     if (!records.length) { alert('目前沒有紀錄可備份。'); return; }
     const blob = new Blob([JSON.stringify(records, null, 2)], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `travel_records_${new Date().toISOString().slice(0,10)}.json`;
+    a.download = `travel_${new Date().toISOString().slice(0,10)}.json`;
     a.click();
 }
 
-// ── 匯出 CSV（Excel 可開啟） ──────────────────────────────
+// ── 匯出 CSV ──────────────────────────────────────────────
 function exportCSV() {
     const records = JSON.parse(localStorage.getItem('travel_records')) || [];
     if (!records.length) { alert('目前沒有紀錄可匯出。'); return; }
@@ -409,7 +550,7 @@ function exportCSV() {
     const blob   = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `travel_records_${new Date().toISOString().slice(0,10)}.csv`;
+    a.download = `travel_${new Date().toISOString().slice(0,10)}.csv`;
     a.click();
 }
 
@@ -422,10 +563,10 @@ importInput.addEventListener('change', function(e) {
         try {
             const imported = JSON.parse(ev.target.result);
             if (!Array.isArray(imported)) throw new Error('格式錯誤');
-            const existing = JSON.parse(localStorage.getItem('travel_records')) || [];
+            const existing    = JSON.parse(localStorage.getItem('travel_records')) || [];
             const existingIds = new Set(existing.map(r => r.id));
-            const newItems = imported.filter(r => !existingIds.has(r.id));
-            const merged = [...newItems, ...existing].sort((a, b) => b.id - a.id);
+            const newItems    = imported.filter(r => !existingIds.has(r.id));
+            const merged      = [...newItems, ...existing].sort((a, b) => b.id - a.id);
             localStorage.setItem('travel_records', JSON.stringify(merged));
             alert(`✅ 匯入成功！新增 ${newItems.length} 筆，略過重複 ${imported.length - newItems.length} 筆。`);
             renderAll();
@@ -444,6 +585,7 @@ function clearAll() {
     renderAll();
 }
 
+// ── 初始化 ────────────────────────────────────────────────
 initExchangeRate();
 renderAll();
 </script>
