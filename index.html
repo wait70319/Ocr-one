@@ -339,43 +339,101 @@ jpyInput.addEventListener('input', () => {
     twdDisplay.innerText = `NT$ ${Math.round(jpy * currentRate).toLocaleString()}`;
 });
 
-// ── OCR 金額擷取 ──────────────────────────────────────────
+// ── OCR 金額擷取（加強版：排除 IC 卡餘額）────────────────
 function extractAmountFromOCR(text) {
+    // ── Step 0：正規化 ──────────────────────────────────────
     const normalized = text
         .replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
-        .replace(/￥/g, '¥')
+        .replace(/[¥￥]/g, '¥')
         .replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 
-    const lines = normalized.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-    const PRIORITY = ['合計', '合 計', 'お買上額', '請求額', 'お会計'];
-    const FALLBACK  = ['小計'];
+    // ── Step 1：標記需要「整行忽略」的關鍵字 ────────────────
+    // 這些行的數字絕對不是消費金額
+    const IGNORE_LINE_KEYWORDS = [
+        // IC 卡餘額
+        '残額', '残高', 'ざんだか', 'SF残額', 'SF残高',
+        'チャージ残額', 'チャージ残高', '入金残額', '電子マネー残高',
+        'ポイント残高', '残ポイント',
+        // 找零
+        'お釣り', 'お釣', 'おつり', '釣銭', 'つり銭',
+        // 支付前現金 / 預收
+        'お預り', 'おあずかり', '預り', 'お預かり',
+        // IC 卡支付金額（這是扣款，不是總計）
+        'IC支払', 'IC利用', '電子マネー支払', 'Suica支払',
+        'PASMO支払', 'ICOCA支払', 'nanaco支払', 'Edy支払',
+        'iD支払', 'QUICPay支払',
+        // 消費稅單獨列（內稅，不是總計）
+        '内消費税', '内税', '（内税）', '(内税)',
+    ];
 
-    for (const kw of [...PRIORITY, ...FALLBACK]) {
+    // ── Step 2：找出「應該忽略的行」的 index 集合 ────────────
+    const lines = normalized.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+    const ignoredLineIdx = new Set();
+    lines.forEach((line, i) => {
+        if (IGNORE_LINE_KEYWORDS.some(kw => line.includes(kw))) {
+            ignoredLineIdx.add(i);
+            // 同時忽略緊接的下一行（有時餘額數字在關鍵字的下一行）
+            ignoredLineIdx.add(i + 1);
+        }
+    });
+
+    // 輔助：從一行文字中取出最大數字（忽略行則回傳 -1）
+    function getMaxNum(line) {
+        const nums = line.match(/\d[\d,]*/g);
+        if (!nums) return -1;
+        return Math.max(...nums.map(n => parseInt(n.replace(/,/g, ''), 10)));
+    }
+
+    // ── Step 3：優先關鍵字搜尋（合計 / 請求額 等）───────────
+    // 優先順序：合計 > お買上額 > 請求額 > お会計 > 小計
+    const PRIORITY_KW = ['合計', '合 計', 'お買上額', '請求額', 'お会計'];
+    const FALLBACK_KW = ['小計'];
+
+    for (const kw of [...PRIORITY_KW, ...FALLBACK_KW]) {
         for (let i = 0; i < lines.length; i++) {
+            if (ignoredLineIdx.has(i)) continue;         // 忽略餘額等行
             if (!lines[i].includes(kw)) continue;
-            const inlineNums = lines[i].match(/\d[\d,]*/g);
-            if (inlineNums) {
-                const max = Math.max(...inlineNums.map(n => parseInt(n.replace(/,/g, ''), 10)));
-                if (max >= 10) return max;
-            }
+
+            // 同一行找數字
+            const inlineMax = getMaxNum(lines[i]);
+            if (inlineMax >= 10) return inlineMax;
+
+            // 跨行：往後最多 3 行（同樣跳過忽略行）
             for (let j = i + 1; j <= i + 3 && j < lines.length; j++) {
+                if (ignoredLineIdx.has(j)) continue;
                 const nextNums = lines[j].match(/[¥]?\s*(\d[\d,]*)/g);
                 if (nextNums) {
-                    const max = Math.max(...nextNums.map(n => parseInt(n.replace(/[¥\s,]/g, ''), 10)));
+                    const max = Math.max(...nextNums.map(n =>
+                        parseInt(n.replace(/[¥\s,]/g, ''), 10)
+                    ));
                     if (max >= 10) return max;
                 }
             }
         }
     }
-    const noChange = normalized.replace(/お釣り[^\n]*/g, '').replace(/釣銭[^\n]*/g, '');
-    const yenMatches = noChange.match(/[¥]\s*(\d[\d,]+)/g);
-    if (yenMatches) {
-        const max = Math.max(...yenMatches.map(s => parseInt(s.replace(/[¥\s,]/g, ''), 10)));
-        if (max >= 10) return max;
-    }
-    const allNums = normalized.match(/\d[\d,]*/g);
-    if (allNums) return Math.max(...allNums.map(n => parseInt(n.replace(/,/g, ''), 10)));
-    return 0;
+
+    // ── Step 4：全文搜尋 ¥數字，排除忽略行後取最大值 ────────
+    let yenMax = 0;
+    lines.forEach((line, i) => {
+        if (ignoredLineIdx.has(i)) return;
+        const yenNums = line.match(/[¥]\s*(\d[\d,]+)/g);
+        if (yenNums) {
+            const max = Math.max(...yenNums.map(s =>
+                parseInt(s.replace(/[¥\s,]/g, ''), 10)
+            ));
+            if (max > yenMax) yenMax = max;
+        }
+    });
+    if (yenMax >= 10) return yenMax;
+
+    // ── Step 5：最後手段 — 所有數字取最大（排除忽略行）──────
+    let allMax = 0;
+    lines.forEach((line, i) => {
+        if (ignoredLineIdx.has(i)) return;
+        const max = getMaxNum(line);
+        if (max > allMax) allMax = max;
+    });
+    return allMax >= 10 ? allMax : 0;
 }
 
 // ── 圖片壓縮 + OCR ────────────────────────────────────────
