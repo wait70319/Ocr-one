@@ -1,12 +1,10 @@
-const CACHE_NAME = 'travel-app-v2';
+const CACHE_NAME = 'travel-app-v3';
 const BASE = '/Ocr-one';
+// 只快取一定存在的核心檔案，圖示讓 fetch handler 動態快取
 const STATIC_ASSETS = [
-  BASE + '/',
   BASE + '/index.html',
   BASE + '/manifest.json',
-  BASE + '/icon-192.png',
-  BASE + '/icon-512.png',
-  BASE + '/apple-touch-icon.png'
+  BASE + '/sw.js'
 ];
 
 // ── 安裝：預快取靜態資源 ──────────────────────────────────
