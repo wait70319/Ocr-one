@@ -62,18 +62,6 @@
         .record-item { border-bottom: 1px solid #eee; padding: 10px 0; display: flex; justify-content: space-between; align-items: center; }
         .record-img { width: 50px; height: 50px; object-fit: cover; border-radius: 4px; margin-right: 10px; flex-shrink: 0; }
 
-        /* 來源切換 tabs */
-        .source-tabs { display: flex; gap: 8px; margin-bottom: 12px; }
-        .source-tab {
-            flex: 1; padding: 11px 6px; border: 2px solid #ccc;
-            background: #f8f9fa; border-radius: 8px;
-            font-size: 14px; font-weight: bold; color: #555;
-            cursor: pointer; text-align: center; transition: all 0.2s;
-            -webkit-tap-highlight-color: transparent;
-            touch-action: manipulation;
-        }
-        .source-tab.active { border-color: #007bff; background: #e7f1ff; color: #007bff; }
-
         /* 安裝橫幅 (iOS / Android 通用) */
         #installBanner {
             display: none; background: #1a1a2e; color: #fff;
@@ -155,14 +143,8 @@
     <div class="rate-info" id="rateInfo">正在獲取最新匯率...</div>
 
     <div class="input-group" style="margin-top:15px;">
-        <label>1. 選擇圖片來源：</label>
-        <div class="source-tabs">
-            <div class="source-tab active" id="tabCamera" onclick="switchSource('camera')">📷 拍照</div>
-            <div class="source-tab"        id="tabFile"   onclick="switchSource('file')">🖼️ 從相簿/檔案</div>
-        </div>
-        <!-- capture="environment" → 直接開後鏡頭；無 capture → 讓使用者選 -->
-        <input type="file" id="cameraInput" accept="image/*" capture="environment">
-        <input type="file" id="fileInput"   accept="image/*" style="display:none;">
+        <label>1. 選擇收據圖片：</label>
+        <input type="file" id="cameraInput" accept="image/*">
     </div>
 
     <img id="imagePreview" class="preview" alt="收據預覽">
@@ -237,7 +219,6 @@ const API_KEY = 'K88343483088957';
 // DOM
 const rateInfo       = document.getElementById('rateInfo');
 const cameraInput    = document.getElementById('cameraInput');
-const fileInput      = document.getElementById('fileInput');
 const imagePreview   = document.getElementById('imagePreview');
 const statusText     = document.getElementById('statusText');
 const categoryInput  = document.getElementById('categoryInput');
@@ -316,18 +297,6 @@ function dismissBanner() {
 if (isIOS() && !isInStandaloneMode() && !localStorage.getItem('install_banner_dismissed')) {
     document.getElementById('installBannerText').textContent = '📲 點「分享」→「加入主畫面」即可安裝 App';
     document.getElementById('installBanner').style.display = 'flex';
-}
-
-// ── 來源切換 ──────────────────────────────────────────────
-function switchSource(mode) {
-    const isCamera = mode === 'camera';
-    document.getElementById('tabCamera').classList.toggle('active', isCamera);
-    document.getElementById('tabFile').classList.toggle('active', !isCamera);
-    cameraInput.style.display = isCamera ? '' : 'none';
-    fileInput.style.display   = isCamera ? 'none' : '';
-    imagePreview.style.display = 'none';
-    statusText.innerText = '';
-    currentImageBase64 = '';
 }
 
 // ── 匯率 ──────────────────────────────────────────────────
@@ -628,7 +597,6 @@ function processImageFile(file) {
 }
 
 cameraInput.addEventListener('change', e => processImageFile(e.target.files[0]));
-fileInput.addEventListener('change',   e => processImageFile(e.target.files[0]));
 
 // ── 儲存紀錄 ──────────────────────────────────────────────
 saveBtn.addEventListener('click', () => {
@@ -660,7 +628,6 @@ saveBtn.addEventListener('click', () => {
     imagePreview.style.display = 'none';
     currentImageBase64 = '';
     cameraInput.value = '';
-    fileInput.value = '';
     statusText.style.color = 'green';
     statusText.innerText = '✅ 儲存成功！';
 
