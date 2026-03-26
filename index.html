@@ -24,6 +24,9 @@
     <!-- ── SEO / 分享 ── -->
     <meta name="description" content="拍照辨識日文收據，自動換算日圓台幣，離線也能記帳">
 
+    <!-- ── SheetJS (Excel 匯出) ── -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
     <style>
         /* ── 基礎 & Safe Area（iPhone 瀏海 / 底部手勢條）── */
         * { box-sizing: border-box; }
@@ -40,9 +43,9 @@
         .card { background: #fff; padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 20px; }
         .input-group { margin-bottom: 15px; }
         .input-group label { display: block; margin-bottom: 5px; font-weight: bold; }
-        input[type="number"], input[type="text"], select {
+        input[type="number"], input[type="text"], input[type="date"], select {
             width: 100%; padding: 12px; border: 1px solid #ccc; border-radius: 8px;
-            font-size: 16px; /* 防止 iOS 自動縮放 */
+            font-size: 16px;
             -webkit-appearance: none; appearance: none;
         }
         button {
@@ -112,6 +115,7 @@
         .btn-sm:active { opacity: 0.85; }
         .btn-export-json { background: #6c757d; }
         .btn-export-csv  { background: #28a745; }
+        .btn-export-xlsx { background: #1d6f42; }
         .btn-import-json { background: #fd7e14; }
         .btn-danger      { background: #dc3545; }
 
@@ -191,6 +195,11 @@
     </div>
 
     <div class="input-group">
+        <label>📅 消費日期:</label>
+        <input type="date" id="receiptDateInput">
+    </div>
+
+    <div class="input-group">
         <label>備註:</label>
         <input type="text" id="noteInput" placeholder="例如：黑亭拉麵、伴手禮...">
     </div>
@@ -207,6 +216,7 @@
     <div class="btn-row">
         <button class="btn-sm btn-export-json" onclick="exportJSON()">📦 備份 JSON</button>
         <button class="btn-sm btn-export-csv"  onclick="exportCSV()">📊 匯出 CSV</button>
+        <button class="btn-sm btn-export-xlsx" onclick="exportExcel()">📈 匯出 Excel</button>
         <button class="btn-sm btn-import-json" onclick="document.getElementById('importInput').click()">📥 匯入 JSON</button>
         <button class="btn-sm btn-danger"       onclick="clearAll()">🗑️ 清除全部</button>
     </div>
@@ -234,8 +244,9 @@ const categoryInput  = document.getElementById('categoryInput');
 const jpyInput       = document.getElementById('jpyInput');
 const twdDisplay     = document.getElementById('twdDisplay');
 const noteInput      = document.getElementById('noteInput');
-const storeInput     = document.getElementById('storeInput');
-const saveBtn        = document.getElementById('saveBtn');
+const storeInput        = document.getElementById('storeInput');
+const receiptDateInput  = document.getElementById('receiptDateInput');
+const saveBtn           = document.getElementById('saveBtn');
 const recordList     = document.getElementById('recordList');
 const historyCard    = document.getElementById('historyCard');
 const summaryCard    = document.getElementById('summaryCard');
@@ -497,6 +508,46 @@ function extractStoreFromOCR(text) {
 
     return bestStore.length >= 2 ? bestStore : '';
 }
+
+// ── OCR 消費日期擷取 ──────────────────────────────────────
+function extractDateFromOCR(text) {
+    const normalized = text
+        .replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
+        .replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+
+    const patterns = [
+        // 2024年03月14日 / 2024年3月14日
+        { re: /(\d{4})[年](\d{1,2})[月](\d{1,2})[日]?/, y:1, m:2, d:3 },
+        // 2024/03/14 or 2024-03-14
+        { re: /(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/, y:1, m:2, d:3 },
+        // 令和xx年mm月dd日
+        { re: /令和(\d{1,2})[年\/](\d{1,2})[月\/](\d{1,2})[日]?/, reiwa:true, y:1, m:2, d:3 },
+        // 平成xx年mm月dd日
+        { re: /平成(\d{1,2})[年\/](\d{1,2})[月\/](\d{1,2})[日]?/, heisei:true, y:1, m:2, d:3 },
+        // 24/03/14（2位年）
+        { re: /(\d{2})[\/](\d{1,2})[\/](\d{1,2})/, shortY:true, y:1, m:2, d:3 },
+    ];
+
+    for (const p of patterns) {
+        const match = normalized.match(p.re);
+        if (!match) continue;
+        let year  = parseInt(match[p.y], 10);
+        const mon = parseInt(match[p.m], 10);
+        const day = parseInt(match[p.d], 10);
+
+        if (p.reiwa)  year = 2018 + year;
+        if (p.heisei) year = 1988 + year;
+        if (p.shortY) year = year + (year >= 50 ? 1900 : 2000);
+
+        if (year < 2000 || year > 2100) continue;
+        if (mon < 1 || mon > 12) continue;
+        if (day < 1 || day > 31) continue;
+
+        return `${year}-${String(mon).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+    }
+    return '';
+}
+
 function processImageFile(file) {
     if (!file) return;
     const reader = new FileReader();
@@ -544,17 +595,20 @@ function processImageFile(file) {
                 const amount = extractAmountFromOCR(text);
                 // 商店辨識
                 const store  = extractStoreFromOCR(text);
+                // 日期辨識
+                const receiptDate = extractDateFromOCR(text);
 
-                if (store && !storeInput.value) {
-                    storeInput.value = store;
-                }
+                if (store && !storeInput.value) storeInput.value = store;
+                if (receiptDate && !receiptDateInput.value) receiptDateInput.value = receiptDate;
 
                 if (amount > 0) {
                     jpyInput.value = amount;
                     jpyInput.dispatchEvent(new Event('input'));
                     statusText.style.color = 'green';
-                    const storeMsg = store ? `　商店：${store}` : '';
-                    statusText.innerText = `✅ 辨識完成！合計金額：¥${amount.toLocaleString()}${storeMsg}`;
+                    const parts = [`✅ 合計：¥${amount.toLocaleString()}`];
+                    if (store) parts.push(`商店：${store}`);
+                    if (receiptDate) parts.push(`日期：${receiptDate}`);
+                    statusText.innerText = parts.join('　');
                 } else {
                     statusText.style.color = 'orange';
                     statusText.innerText = store
@@ -584,6 +638,7 @@ saveBtn.addEventListener('click', () => {
     const record = {
         id: Date.now(),
         date: new Date().toLocaleDateString('zh-TW'),
+        receiptDate: receiptDateInput.value || '',
         category: categoryInput.value,
         store: storeInput.value.trim() || '',
         amountJPY: jpy,
@@ -600,6 +655,7 @@ saveBtn.addEventListener('click', () => {
     jpyInput.value = '';
     twdDisplay.innerText = 'NT$ 0';
     storeInput.value = '';
+    receiptDateInput.value = '';
     noteInput.value = '';
     imagePreview.style.display = 'none';
     currentImageBase64 = '';
@@ -663,8 +719,9 @@ function renderRecords(records) {
                 <div style="min-width:0;">
                     <span class="tag ${catClass[record.category] || ''}">${record.category}</span>
                     ${record.store ? `<span style="font-size:0.85em;color:#555;font-weight:bold;">🏪 ${record.store}</span><br>` : ''}
+                    ${record.receiptDate ? `<span style="font-size:0.78em;color:#007bff;">📅 ${record.receiptDate}</span><br>` : ''}
                     <strong style="word-break:break-all;">${record.note}</strong><br>
-                    <span style="font-size:0.8em;color:#888;">${record.date}</span>
+                    <span style="font-size:0.8em;color:#888;">記帳：${record.date}</span>
                 </div>
             </div>
             <div style="text-align:right;flex-shrink:0;margin-left:8px;">
@@ -696,14 +753,198 @@ function exportJSON() {
 function exportCSV() {
     const records = JSON.parse(localStorage.getItem('travel_records')) || [];
     if (!records.length) { alert('目前沒有紀錄可匯出。'); return; }
-    const header = ['日期', '分類', '商店', '備註', '日圓(JPY)', '台幣(TWD)'];
-    const rows   = records.map(r => [r.date, r.category, r.store || '', r.note, r.amountJPY, r.amountTWD]);
+    const header = ['消費日期', '記帳日期', '分類', '商店', '備註', '日圓(JPY)', '台幣(TWD)'];
+    const rows   = records.map(r => [r.receiptDate || '', r.date, r.category, r.store || '', r.note, r.amountJPY, r.amountTWD]);
     const csv    = '\uFEFF' + [header, ...rows].map(r => r.map(v => `"${v}"`).join(',')).join('\n');
     const blob   = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = `travel_${new Date().toISOString().slice(0,10)}.csv`;
     a.click();
+}
+
+// ── 匯出 Excel（依消費日期分組，含小計與總計）────────────
+function exportExcel() {
+    if (typeof XLSX === 'undefined') { alert('Excel 函式庫載入中，請稍後再試。'); return; }
+    const records = JSON.parse(localStorage.getItem('travel_records')) || [];
+    if (!records.length) { alert('目前沒有紀錄可匯出。'); return; }
+
+    const wb = XLSX.utils.book_new();
+
+    // ── 排序：消費日期升冪，無日期放最後 ─────────────────
+    const sorted = [...records].sort((a, b) => {
+        const da = a.receiptDate || '9999';
+        const db = b.receiptDate || '9999';
+        return da.localeCompare(db);
+    });
+
+    // ── 依消費日期分組 ────────────────────────────────────
+    const groups = {};
+    sorted.forEach(r => {
+        const key = r.receiptDate || '（未填日期）';
+        if (!groups[key]) groups[key] = [];
+        groups[key].push(r);
+    });
+
+    // ══════════════════════════════════════════════════════
+    // 工作表 1：消費明細
+    // ══════════════════════════════════════════════════════
+    const wsData = [];
+
+    // 表頭
+    wsData.push(['消費日期', '分類', '商店', '備註', '日圓 (JPY)', '台幣 (TWD)']);
+
+    let totalJPY = 0, totalTWD = 0;
+    const subtotalRows = []; // 記錄小計列的 row index（0-based）
+    let rowIdx = 1;
+
+    Object.entries(groups).forEach(([date, items]) => {
+        let dayJPY = 0, dayTWD = 0;
+        items.forEach(r => {
+            wsData.push([date, r.category, r.store || '', r.note, r.amountJPY, r.amountTWD]);
+            dayJPY += r.amountJPY;
+            dayTWD += r.amountTWD;
+            rowIdx++;
+        });
+        // 日期小計列
+        wsData.push([`${date} 小計`, '', '', '', dayJPY, dayTWD]);
+        subtotalRows.push(rowIdx);
+        rowIdx++;
+        totalJPY += dayJPY;
+        totalTWD += dayTWD;
+    });
+
+    // 空白分隔
+    wsData.push(['', '', '', '', '', '']);
+    rowIdx++;
+
+    // 總計列
+    const totalRowIdx = rowIdx;
+    wsData.push(['✦ 旅行總計', '', '', '', totalJPY, totalTWD]);
+
+    const ws1 = XLSX.utils.aoa_to_sheet(wsData);
+
+    // 欄寬
+    ws1['!cols'] = [
+        { wch: 18 }, // 消費日期
+        { wch: 8  }, // 分類
+        { wch: 22 }, // 商店
+        { wch: 24 }, // 備註
+        { wch: 14 }, // JPY
+        { wch: 14 }, // TWD
+    ];
+
+    // 凍結第一列（標題固定）
+    ws1['!freeze'] = { xSplit: 0, ySplit: 1 };
+
+    // 套用儲存格樣式（標題、小計、總計）
+    const HEADER_STYLE = {
+        font: { bold: true, color: { rgb: 'FFFFFF' }, sz: 11 },
+        fill: { fgColor: { rgb: '1A1A2E' } },
+        alignment: { horizontal: 'center', vertical: 'center' },
+        border: { bottom: { style: 'medium', color: { rgb: '007BFF' } } }
+    };
+    const SUBTOTAL_STYLE = {
+        font: { bold: true, color: { rgb: '1D6F42' }, sz: 10 },
+        fill: { fgColor: { rgb: 'E8F5E9' } },
+        alignment: { horizontal: 'right' },
+    };
+    const TOTAL_STYLE = {
+        font: { bold: true, color: { rgb: 'FFFFFF' }, sz: 12 },
+        fill: { fgColor: { rgb: 'D9534F' } },
+        alignment: { horizontal: 'center' },
+    };
+    const NUM_STYLE = {
+        numFmt: '#,##0',
+    };
+    const SUBTOTAL_NUM_STYLE = {
+        font: { bold: true, color: { rgb: '1D6F42' } },
+        fill: { fgColor: { rgb: 'E8F5E9' } },
+        numFmt: '#,##0',
+    };
+    const TOTAL_NUM_STYLE = {
+        font: { bold: true, color: { rgb: 'FFFFFF' }, sz: 12 },
+        fill: { fgColor: { rgb: 'D9534F' } },
+        numFmt: '#,##0',
+    };
+
+    const cols = ['A','B','C','D','E','F'];
+
+    // 標題列樣式
+    cols.forEach(c => {
+        const cell = ws1[`${c}1`];
+        if (cell) cell.s = HEADER_STYLE;
+    });
+
+    // 小計列樣式
+    subtotalRows.forEach(ri => {
+        const r = ri + 1; // 1-based
+        cols.forEach((c, ci) => {
+            const cell = ws1[`${c}${r}`];
+            if (!cell) return;
+            cell.s = (ci >= 4) ? SUBTOTAL_NUM_STYLE : SUBTOTAL_STYLE;
+        });
+    });
+
+    // 總計列樣式
+    const tr = totalRowIdx + 1;
+    cols.forEach((c, ci) => {
+        const cell = ws1[`${c}${tr}`];
+        if (!cell) return;
+        cell.s = (ci >= 4) ? TOTAL_NUM_STYLE : TOTAL_STYLE;
+    });
+
+    // 數字欄加千分位格式
+    for (let i = 2; i <= rowIdx; i++) {
+        ['E','F'].forEach(c => {
+            const cell = ws1[`${c}${i}`];
+            if (cell && typeof cell.v === 'number' && !subtotalRows.includes(i-1) && i !== tr) {
+                cell.s = NUM_STYLE;
+            }
+        });
+    }
+
+    XLSX.utils.book_append_sheet(wb, ws1, '消費明細');
+
+    // ══════════════════════════════════════════════════════
+    // 工作表 2：每日摘要
+    // ══════════════════════════════════════════════════════
+    const s2Data = [['消費日期', '筆數', '日圓合計 (JPY)', '台幣合計 (TWD)']];
+    Object.entries(groups).forEach(([date, items]) => {
+        const jpy = items.reduce((s, r) => s + r.amountJPY, 0);
+        const twd = items.reduce((s, r) => s + r.amountTWD, 0);
+        s2Data.push([date, items.length, jpy, twd]);
+    });
+    s2Data.push(['✦ 旅行總計', records.length, totalJPY, totalTWD]);
+
+    const ws2 = XLSX.utils.aoa_to_sheet(s2Data);
+    ws2['!cols'] = [{ wch: 18 }, { wch: 8 }, { wch: 18 }, { wch: 18 }];
+    ws2['!freeze'] = { xSplit: 0, ySplit: 1 };
+
+    // 摘要表標題 & 總計樣式
+    ['A','B','C','D'].forEach(c => {
+        const cell = ws2[`${c}1`];
+        if (cell) cell.s = HEADER_STYLE;
+    });
+    const s2LastRow = s2Data.length;
+    ['A','B','C','D'].forEach((c, ci) => {
+        const cell = ws2[`${c}${s2LastRow}`];
+        if (!cell) return;
+        cell.s = (ci >= 2) ? TOTAL_NUM_STYLE : TOTAL_STYLE;
+    });
+    // 數字格式
+    for (let i = 2; i < s2LastRow; i++) {
+        ['C','D'].forEach(c => {
+            const cell = ws2[`${c}${i}`];
+            if (cell && typeof cell.v === 'number') cell.s = NUM_STYLE;
+        });
+    }
+
+    XLSX.utils.book_append_sheet(wb, ws2, '每日摘要');
+
+    // 輸出
+    const filename = `旅行記帳_${new Date().toISOString().slice(0,10)}.xlsx`;
+    XLSX.writeFile(wb, filename);
 }
 
 // ── 匯入 JSON ─────────────────────────────────────────────
