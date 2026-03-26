@@ -186,6 +186,11 @@
     </div>
 
     <div class="input-group">
+        <label>🏪 商店名稱:</label>
+        <input type="text" id="storeInput" placeholder="辨識結果會填入此，也可手動修改">
+    </div>
+
+    <div class="input-group">
         <label>備註:</label>
         <input type="text" id="noteInput" placeholder="例如：黑亭拉麵、伴手禮...">
     </div>
@@ -229,6 +234,7 @@ const categoryInput  = document.getElementById('categoryInput');
 const jpyInput       = document.getElementById('jpyInput');
 const twdDisplay     = document.getElementById('twdDisplay');
 const noteInput      = document.getElementById('noteInput');
+const storeInput     = document.getElementById('storeInput');
 const saveBtn        = document.getElementById('saveBtn');
 const recordList     = document.getElementById('recordList');
 const historyCard    = document.getElementById('historyCard');
@@ -436,7 +442,61 @@ function extractAmountFromOCR(text) {
     return allMax >= 10 ? allMax : 0;
 }
 
-// ── 圖片壓縮 + OCR ────────────────────────────────────────
+// ── OCR 商店名稱擷取 ──────────────────────────────────────
+function extractStoreFromOCR(text) {
+    const normalized = text
+        .replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+        .replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
+
+    const lines = normalized.split('\n')
+        .map(l => l.trim())
+        .filter(l => l.length > 0);
+
+    // ── 策略 1：找「店名」「店舗名」「屋号」等明確標籤 ──────
+    const storeLabelKw = ['店名', '店舗名', '屋号', 'ストア名', 'お店'];
+    for (const line of lines) {
+        for (const kw of storeLabelKw) {
+            if (line.includes(kw)) {
+                // 同行冒號後取店名
+                const m = line.match(/[：:]\s*(.+)/);
+                if (m && m[1].trim().length >= 2) return m[1].trim();
+            }
+        }
+    }
+
+    // ── 策略 2：收據通常前 5 行就是店名，找最長的純文字行 ───
+    // 排除規則：全是數字/符號、包含電話FAX地址、太短
+    const NOISE_KW = [
+        'TEL', 'FAX', 'Tel', 'Fax', '電話', '〒', 'http', 'www',
+        '登録番号', '登録No', '適格', 'インボイス',
+        '営業', '定休', '受付', 'thank', 'Thank', 'ありがとう',
+        'レシート', '領収', '明細', 'No.', 'NO.',
+    ];
+
+    const topLines = lines.slice(0, 8);
+    let bestStore = '';
+
+    for (const line of topLines) {
+        // 跳過含雜訊關鍵字的行
+        if (NOISE_KW.some(kw => line.includes(kw))) continue;
+        // 跳過主要是數字或符號的行
+        if (/^[\d\s\-\(\)\/\\.,＊※◆●▶【】「」]+$/.test(line)) continue;
+        // 跳過太短的行
+        if (line.length < 2) continue;
+        // 跳過包含電話格式的行
+        if (/\d{2,4}[-－]\d{2,4}[-－]\d{3,4}/.test(line)) continue;
+
+        // 取字元最多的那行（通常店名最顯眼）
+        if (line.length > bestStore.length) bestStore = line;
+    }
+
+    // 清理：去除前後的特殊符號
+    bestStore = bestStore.replace(/^[★☆◆●▶【】「」※◎○\s]+/, '')
+                         .replace(/[★☆◆●▶【】「」※◎○\s]+$/, '')
+                         .trim();
+
+    return bestStore.length >= 2 ? bestStore : '';
+}
 function processImageFile(file) {
     if (!file) return;
     const reader = new FileReader();
@@ -479,15 +539,27 @@ function processImageFile(file) {
                 if (data.IsErroredOnProcessing) throw new Error(data.ErrorMessage[0]);
                 const text = data.ParsedResults[0].ParsedText;
                 console.log('OCR 結果：\n', text);
+
+                // 金額辨識
                 const amount = extractAmountFromOCR(text);
+                // 商店辨識
+                const store  = extractStoreFromOCR(text);
+
+                if (store && !storeInput.value) {
+                    storeInput.value = store;
+                }
+
                 if (amount > 0) {
                     jpyInput.value = amount;
                     jpyInput.dispatchEvent(new Event('input'));
                     statusText.style.color = 'green';
-                    statusText.innerText = `✅ 辨識完成！合計金額：¥${amount.toLocaleString()}`;
+                    const storeMsg = store ? `　商店：${store}` : '';
+                    statusText.innerText = `✅ 辨識完成！合計金額：¥${amount.toLocaleString()}${storeMsg}`;
                 } else {
                     statusText.style.color = 'orange';
-                    statusText.innerText = '⚠️ 找不到明確合計數字，請手動輸入。';
+                    statusText.innerText = store
+                        ? `⚠️ 找不到合計數字，請手動輸入。（商店：${store}）`
+                        : '⚠️ 找不到明確合計數字，請手動輸入。';
                 }
             })
             .catch(err => {
@@ -513,6 +585,7 @@ saveBtn.addEventListener('click', () => {
         id: Date.now(),
         date: new Date().toLocaleDateString('zh-TW'),
         category: categoryInput.value,
+        store: storeInput.value.trim() || '',
         amountJPY: jpy,
         amountTWD: Math.round(jpy * currentRate),
         note: noteInput.value.trim() || '無備註',
@@ -526,6 +599,7 @@ saveBtn.addEventListener('click', () => {
     // 清空表單
     jpyInput.value = '';
     twdDisplay.innerText = 'NT$ 0';
+    storeInput.value = '';
     noteInput.value = '';
     imagePreview.style.display = 'none';
     currentImageBase64 = '';
@@ -588,6 +662,7 @@ function renderRecords(records) {
                 ${imgHtml}
                 <div style="min-width:0;">
                     <span class="tag ${catClass[record.category] || ''}">${record.category}</span>
+                    ${record.store ? `<span style="font-size:0.85em;color:#555;font-weight:bold;">🏪 ${record.store}</span><br>` : ''}
                     <strong style="word-break:break-all;">${record.note}</strong><br>
                     <span style="font-size:0.8em;color:#888;">${record.date}</span>
                 </div>
@@ -621,8 +696,8 @@ function exportJSON() {
 function exportCSV() {
     const records = JSON.parse(localStorage.getItem('travel_records')) || [];
     if (!records.length) { alert('目前沒有紀錄可匯出。'); return; }
-    const header = ['日期', '分類', '備註', '日圓(JPY)', '台幣(TWD)'];
-    const rows   = records.map(r => [r.date, r.category, r.note, r.amountJPY, r.amountTWD]);
+    const header = ['日期', '分類', '商店', '備註', '日圓(JPY)', '台幣(TWD)'];
+    const rows   = records.map(r => [r.date, r.category, r.store || '', r.note, r.amountJPY, r.amountTWD]);
     const csv    = '\uFEFF' + [header, ...rows].map(r => r.map(v => `"${v}"`).join(',')).join('\n');
     const blob   = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const a = document.createElement('a');
