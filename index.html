@@ -444,38 +444,47 @@ function extractStoreFromOCR(text) {
         }
     }
 
-    // ── 策略 2：收據通常前 5 行就是店名，找最長的純文字行 ───
-    // 排除規則：全是數字/符號、包含電話FAX地址、太短
+    // ── 策略 2：收據最頂部幾行就是店名 ────────────────────
+    // 取最前面第一個「非雜訊、非太短」的行，而非最長的行
+    // 因為商品名稱比店名長，取最長會抓錯
     const NOISE_KW = [
         'TEL', 'FAX', 'Tel', 'Fax', '電話', '〒', 'http', 'www',
-        '登録番号', '登録No', '適格', 'インボイス',
+        '登録番号', '登録No', '適格', 'インボイス', 'T9-', 'T8-',
         '営業', '定休', '受付', 'thank', 'Thank', 'ありがとう',
-        'レシート', '領収', '明細', 'No.', 'NO.',
+        'レシート', '領収', '明細', 'No.', 'NO.', 'レジ',
+        '店:', '店：', '004', '001', '002', '003',  // 店號行
+        '<', '>', '＜', '＞', '《', '》',            // 標題裝飾框
+        '領収書', '収書', '請求書', '納品書',
+        '印', '※', '◆', '●',
     ];
 
-    const topLines = lines.slice(0, 8);
-    let bestStore = '';
-
-    for (const line of topLines) {
-        // 跳過含雜訊關鍵字的行
-        if (NOISE_KW.some(kw => line.includes(kw))) continue;
-        // 跳過主要是數字或符號的行
-        if (/^[\d\s\-\(\)\/\\.,＊※◆●▶【】「」]+$/.test(line)) continue;
-        // 跳過太短的行
-        if (line.length < 2) continue;
-        // 跳過包含電話格式的行
-        if (/\d{2,4}[-－]\d{2,4}[-－]\d{3,4}/.test(line)) continue;
-
-        // 取字元最多的那行（通常店名最顯眼）
-        if (line.length > bestStore.length) bestStore = line;
+    // 額外：若一行有太多 ¥ 或數字，幾乎是商品/金額行
+    function isProductLine(line) {
+        // 含 ¥ 且有數字 → 商品金額行
+        if (/[¥￥]/.test(line) && /\d/.test(line)) return true;
+        // 超過 40% 是數字 → 數字密集行（條碼、電話等）
+        const digits = (line.match(/\d/g) || []).length;
+        if (digits / line.length > 0.4) return true;
+        return false;
     }
 
-    // 清理：去除前後的特殊符號
-    bestStore = bestStore.replace(/^[★☆◆●▶【】「」※◎○\s]+/, '')
-                         .replace(/[★☆◆●▶【】「」※◎○\s]+$/, '')
-                         .trim();
+    // 找收據前 10 行中，第一個符合「像店名」的行
+    const topLines = lines.slice(0, 10);
+    for (const line of topLines) {
+        if (line.length < 2) continue;
+        if (NOISE_KW.some(kw => line.includes(kw))) continue;
+        if (/\d{2,4}[-－]\d{2,4}[-－]\d{3,4}/.test(line)) continue; // 電話格式
+        if (/^[\d\s\-\(\)\/\\.,＊※◆●▶【】「」\*]+$/.test(line)) continue; // 純符號/數字
+        if (isProductLine(line)) continue;
 
-    return bestStore.length >= 2 ? bestStore : '';
+        // 清理前後裝飾符號
+        const clean = line.replace(/^[★☆◆●▶【】「」※◎○\s＊\*]+/, '')
+                          .replace(/[★☆◆●▶【】「」※◎○\s＊\*]+$/, '')
+                          .trim();
+        if (clean.length >= 2) return clean;
+    }
+
+    return '';
 }
 
 // ── OCR 消費日期擷取 ──────────────────────────────────────
